@@ -57,6 +57,11 @@ sema_init (struct semaphore *sema, unsigned value)
    interrupt handler.  This function may be called with
    interrupts disabled, but if it sleeps then the next scheduled
    thread will probably turn interrupts back on. */
+
+bool sort_waiters(struct list_elem* a, struct list_elem* b, void* aux){
+  return list_entry(a, sturct thread, elem)->priority < list_entry(b, struct thread, elem)->priority;
+}
+
 void
 sema_down (struct semaphore *sema) 
 {
@@ -68,7 +73,7 @@ sema_down (struct semaphore *sema)
   old_level = intr_disable ();
   while (sema->value == 0) 
     {
-      list_push_back (&sema->waiters, &thread_current ()->elem);
+      list_insert_ordered (&sema->waiters, &thread_current ()->elem);
       thread_block ();
     }
   sema->value--;
@@ -156,7 +161,7 @@ sema_test_helper (void *sema_)
       sema_up (&sema[1]);
     }
 }
-
+
 /* Initializes LOCK.  A lock can be held by at most a single
    thread at any given time.  Our locks are not "recursive", that
    is, it is an error for the thread currently holding a lock to
