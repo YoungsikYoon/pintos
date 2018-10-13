@@ -59,7 +59,7 @@ sema_init (struct semaphore *sema, unsigned value)
    thread will probably turn interrupts back on. */
 
 bool sort_waiters(struct list_elem* a, struct list_elem* b, void* aux){
-  return list_entry(a, sturct thread, elem)->priority < list_entry(b, struct thread, elem)->priority;
+  return list_entry(a, struct thread, elem)->priority > list_entry(b, struct thread, elem)->priority;
 }
 
 void
@@ -73,7 +73,7 @@ sema_down (struct semaphore *sema)
   old_level = intr_disable ();
   while (sema->value == 0) 
     {
-      list_insert_ordered (&sema->waiters, &thread_current ()->elem);
+      list_insert_ordered (&sema->waiters, &thread_current ()->elem, sort_waiters, NULL); 
       thread_block ();
     }
   sema->value--;
@@ -118,10 +118,11 @@ sema_up (struct semaphore *sema)
   ASSERT (sema != NULL);
 
   old_level = intr_disable ();
-  if (!list_empty (&sema->waiters)) 
+  if (!list_empty (&sema->waiters))
     thread_unblock (list_entry (list_pop_front (&sema->waiters),
                                 struct thread, elem));
   sema->value++;
+
   intr_set_level (old_level);
 }
 
@@ -197,11 +198,19 @@ lock_init (struct lock *lock)
 void
 lock_acquire (struct lock *lock)
 {
+  struct thread* cur = thread_current();
+
   ASSERT (lock != NULL);
   ASSERT (!intr_context ());
   ASSERT (!lock_held_by_current_thread (lock));
+ 
+  if(lock->holder!=NULL){
+    if(cur->priority > lock->holder->priority){
+      lock->holder->priority = cur->priority;
+    }
+  }
 
-  sema_down (&lock->semaphore);
+  sema_down(&lock->semaphore);
   lock->holder = thread_current ();
 }
 
@@ -233,11 +242,17 @@ lock_try_acquire (struct lock *lock)
 void
 lock_release (struct lock *lock) 
 {
+  enum intr_level old_level = intr_disable();
+  struct thread* cur = thread_current();
   ASSERT (lock != NULL);
   ASSERT (lock_held_by_current_thread (lock));
 
+  cur->priority = cur->_priority;
+
   lock->holder = NULL;
   sema_up (&lock->semaphore);
+  thread_yield();
+  intr_set_level(old_level);
 }
 
 /* Returns true if the current thread holds LOCK, false

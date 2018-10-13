@@ -200,7 +200,10 @@ thread_create (const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock (t);
-
+  
+  /* Add code to implement donate
+     If thread that creates new is higher that thread that running,
+     Changing running thread using func thread_yield() */ 
   if(priority > thread_current()->priority) thread_yield();
 
   return tid;
@@ -245,7 +248,7 @@ thread_unblock (struct thread *t)
   ASSERT (t->status == THREAD_BLOCKED);
   list_insert_ordered (&ready_list, &t->elem, sort_ready_list, NULL);
   t->status = THREAD_READY;
-  
+
   intr_set_level (old_level);
 }
 
@@ -342,7 +345,8 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-  thread_current ()->priority = new_priority;
+  thread_current()->priority = new_priority;
+  thread_current()->_priority = new_priority;
   thread_yield();
 }
 
@@ -470,6 +474,7 @@ init_thread (struct thread *t, const char *name, int priority)
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
+  t->_priority = priority;
   t->magic = THREAD_MAGIC;
 
   old_level = intr_disable ();
