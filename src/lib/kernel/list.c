@@ -405,7 +405,6 @@ void
 list_sort (struct list *list, list_less_func *less, void *aux)
 {
   size_t output_run_cnt;        /* Number of runs output in current pass. */
-
   ASSERT (list != NULL);
   ASSERT (less != NULL);
 
@@ -435,7 +434,6 @@ list_sort (struct list *list, list_less_func *less, void *aux)
         }
     }
   while (output_run_cnt > 1);
-
   ASSERT (is_sorted (list_begin (list), list_end (list), less, aux));
 }
 
