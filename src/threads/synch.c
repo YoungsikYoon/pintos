@@ -209,6 +209,7 @@ void lock_donate(struct lock* lock){
   if(lock->holder != NULL){
     if(cur->priority > lock->holder->priority){
       lock->holder->priority = cur->priority;
+      if(lock->holder->holding != NULL) lock_donate(lock->holder->holding);
     }
   }
 }
@@ -222,13 +223,16 @@ lock_acquire (struct lock *lock)
   ASSERT (lock != NULL);
   ASSERT (!intr_context ());
   ASSERT (!lock_held_by_current_thread (lock)); 
- 
+
+  cur->holding = lock;
+
   lock_donate(lock);
 
   sema_down(&lock->semaphore);
   lock->holder = cur;
 
   list_insert_ordered(&cur->locks, &lock->elem, sort_locks, NULL);
+  cur->holding = NULL;
 
   intr_set_level(old_level);
 }
