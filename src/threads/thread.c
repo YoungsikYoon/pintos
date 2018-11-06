@@ -59,6 +59,9 @@ static unsigned thread_ticks;   /* # of timer ticks since last yield. */
    Controlled by kernel command-line option "-o mlfqs". */
 bool thread_mlfqs;
 
+// Add global variable to implement advanced shedular
+static int load_avg; 
+
 static void kernel_thread (thread_func *, void *aux);
 
 static void idle (void *aux UNUSED);
@@ -98,10 +101,13 @@ thread_init (void)
   init_thread (initial_thread, "main", PRI_DEFAULT);
   initial_thread->status = THREAD_RUNNING;
   initial_thread->tid = allocate_tid ();
+  
+  // Initialize this variable in thread_init()
+  load_avg = 0;
 }
 
-/* Starts preemptive thread scheduling by enabling interrupts.
-   Also creates the idle thread. */
+	/* Starts preemptive thread scheduling by enabling interrupts.
+	   Also creates the idle thread. */
 void
 thread_start (void) 
 {
@@ -144,7 +150,7 @@ void
 thread_print_stats (void) 
 {
   printf ("Thread: %lld idle ticks, %lld kernel ticks, %lld user ticks\n",
-          idle_ticks, kernel_ticks, user_ticks);
+	  idle_ticks, kernel_ticks, user_ticks);
 }
 
 /* Creates a new kernel thread named NAME with the given initial
@@ -164,7 +170,7 @@ thread_print_stats (void)
    Priority scheduling is the goal of Problem 1-3. */
 tid_t
 thread_create (const char *name, int priority,
-               thread_func *function, void *aux) 
+	       thread_func *function, void *aux) 
 {
   struct thread *t;
   struct kernel_thread_frame *kf;
@@ -200,15 +206,21 @@ thread_create (const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock (t);
-  
+	  
   /* Add code to implement donate
      If thread that creates new is higher that thread that running,
      Changing running thread using func thread_yield() */ 
+  if(thread_mlfqs) thread_calc_priority(t);
+  
+  // Add code to implement change state of Thread
+  // If priority of init thread is higher than priority of current thread
+  // Make init thread to running state using thread_yield()
   if(priority > thread_current()->priority) thread_yield();
 
   return tid;
 }
 
+// Add this function to give a stardard of sorting (about priority of Threads)
 bool sort_ready_list(struct list_elem* a, struct list_elem* b, void* aux){
   return list_entry(a, struct thread, elem)->priority > list_entry(b, struct thread, elem)->priority;
 }
@@ -246,6 +258,8 @@ thread_unblock (struct thread *t)
 
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
+
+  // Remove push_back() and add list_insert_ordered to implement sorted list
   list_insert_ordered (&ready_list, &t->elem, sort_ready_list, NULL);
   t->status = THREAD_READY;
 
@@ -266,7 +280,7 @@ struct thread *
 thread_current (void) 
 {
   struct thread *t = running_thread ();
-  
+	  
   /* Make sure T is really a thread.
      If either of these assertions fire, then your thread may
      have overflowed its stack.  Each thread has less than 4 kB
@@ -313,10 +327,12 @@ thread_yield (void)
 {
   struct thread *cur = thread_current ();
   enum intr_level old_level;
-  
+	  
   ASSERT (!intr_context ());
 
   old_level = intr_disable ();
+  
+  // Remove push_back() and add list_insert_ordered() to implement sorted list
   if (cur != idle_thread) 
     list_insert_ordered(&ready_list, &cur->elem, sort_ready_list, NULL);
   cur->status = THREAD_READY;
@@ -341,19 +357,69 @@ thread_foreach (thread_action_func *func, void *aux)
     }
 }
 
+// this function is which calc load_avg
+void thread_calc_load_avg (void) {
+  int ready_threads = list_size(&ready_list);
+
+  if(thread_current() != idle_thread) ready_threads++;
+
+  load_avg = ADD(MUL(DIV(FIX(59), FIX(60)), load_avg), MUL(DIV(FIX(1), FIX(60)), FIX(ready_threads)));
+}
+
+// this function is for calculate recent_cpu for all threads
+void thread_calc_recent_cpu_all (void) {
+  struct list_elem* e = list_begin (&all_list);
+
+  while (e != list_end(&all_list)){
+    thread_calc_recent_cpu(list_entry(e, struct thread, allelem));
+    e = list_next(e);
+  }
+}
+
+// this function is for calculate recent_cpu for given thread
+void thread_calc_recent_cpu (struct thread* t) {
+  if (t == idle_thread) return;
+  
+  t->recent_cpu = ADD(MUL(DIV((load_avg * 2), ADD((load_avg * 2), FIX(1))), t->recent_cpu), FIX(t->nice));
+}
+
+// this function is for calculate priority for all threads
+void thread_calc_priority_all (void) {
+  struct list_elem* e = list_begin (&all_list);
+
+  while (e != list_end(&all_list)){
+    thread_calc_priority(list_entry(e, struct thread, allelem));
+    e = list_next(e);
+  }
+}
+
+// this function is for calculate priority for given priority
+void thread_calc_priority (struct thread* t) {
+  if(t == idle_thread) return;
+
+  t->priority = PRI_MAX - ROUND(t->recent_cpu / 4) - t->nice * 2;
+
+  if(t->priority > PRI_MAX) t->priority = PRI_MAX;
+  if(t->priority < PRI_MIN) t->priority = PRI_MIN;
+}
+
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority) 
 {
   struct thread* cur = thread_current();
+	  
+  // when this thread is donated priority by others
+  if(cur->priority > cur->_priority && cur->priority > new_priority)
+    cur->_priority = new_priority; // just change original priority
 
-  if(cur->priority > cur->_priority && cur->priority > new_priority) cur->_priority = new_priority;
-  else{
-    cur->priority = new_priority;
+  // when this thread is not donated or new priority is higher than donated priority
+  else{ 
+    cur->priority = new_priority; // changing both of them
     cur->_priority = new_priority;
   }
 
-  thread_yield();
+  thread_yield(); // Apply to change result
 }
 
 /* Returns the current thread's priority. */
@@ -367,31 +433,32 @@ thread_get_priority (void)
 void
 thread_set_nice (int nice UNUSED) 
 {
-  /* Not yet implemented. */
+  struct thread* cur = thread_current();
+  cur->nice = nice;
+
+  thread_calc_recent_cpu(cur);
+  thread_calc_priority(cur);
 }
 
 /* Returns the current thread's nice value. */
 int
 thread_get_nice (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  return thread_current()->nice;
 }
 
 /* Returns 100 times the system load average. */
 int
 thread_get_load_avg (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  return ROUND(100 * load_avg);
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
 int
 thread_get_recent_cpu (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  return ROUND(100 * thread_current()->recent_cpu);
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
@@ -480,9 +547,14 @@ init_thread (struct thread *t, const char *name, int priority)
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
-  t->_priority = priority;
+  t->_priority = priority; // Add this code to initialize _priority
   t->magic = THREAD_MAGIC;
-  list_init(&t->locks);
+  list_init(&t->locks);    // Add this code to initialize locks
+
+  // initialize nice and recent_cpu in init_thread
+  t->nice = 0;
+  if(t == initial_thread) t->recent_cpu = 0;
+  else t->recent_cpu = thread_get_recent_cpu();
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);

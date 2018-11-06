@@ -19,7 +19,7 @@
 
 /* Number of timer ticks since OS booted. */
 static int64_t ticks;
-struct list sleeping;
+struct list sleeping; // add list for implement sleep list
 
 /* Number of loops per timer tick.
    Initialized by timer_calibrate(). */
@@ -39,6 +39,7 @@ timer_init (void)
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
   list_init (&sleeping);
+  // add list_init() to initialize sleeping list
 }
 
 /* Calibrates loops_per_tick, used to implement brief delays. */
@@ -86,12 +87,14 @@ timer_elapsed (int64_t then)
   return timer_ticks () - then;
 }
 
+// add this function to sort sleeping list when an elem is inserted
 bool sort_sleeping(struct list_elem* a, struct list_elem* b, void* aux){
   return list_entry(a, struct thread, elem)->end < list_entry(b, struct thread, elem)->end;
 }
 
 /* Sleeps for approximately TICKS timer ticks.  Interrupts must
    be turned on. */
+// Changing some of codes to implement timer well
 void
 timer_sleep (int64_t ticks) 
 {
@@ -99,10 +102,12 @@ timer_sleep (int64_t ticks)
 
   old_level = intr_disable();
 
+  // add end variable to check end time of sleeping
   thread_current()->end = timer_ticks() + ticks;
-
+  
+  // nedd above function to get sorted list (standard of sorting is end time)
   list_insert_ordered(&sleeping, &thread_current()->elem, sort_sleeping, NULL);
-
+ 
   thread_block();
   
   intr_set_level (old_level);
@@ -177,21 +182,48 @@ timer_print_stats (void)
 {
   printf ("Timer: %"PRId64" ticks\n", timer_ticks ());
 }
-
 
-void wakeup(){
+// add this function
+// waking threads that end variable is same (have to wake) 
+void 
+wakeup (void)
+{
   struct thread* front;
 
-  while(!list_empty(&sleeping)){
-    front = list_entry(list_pop_front(&sleeping), struct thread, elem);
-    if(ticks >= front->end){
+  while (!list_empty (&sleeping))
+  {
+    front = list_entry (list_pop_front (&sleeping), struct thread, elem);
+    
+    if (ticks >= front->end)
+    {
       thread_unblock(front);
     }
-    else{
+    
+    else 
+    {
       list_push_front(&sleeping, &front->elem);
       break;
     }
   }
+}
+
+// add this function
+// if thread_mlfqs we update load_avg, recent_cpu, priority of threads
+void 
+update (void)
+{
+  struct thread* cur = thread_current();
+  
+  cur->recent_cpu = ADD (cur->recent_cpu, FIX (1));
+
+  if (ticks % TIMER_FREQ == 0)
+  {
+    thread_calc_load_avg ();
+    thread_calc_recent_cpu_all ();
+  }
+
+  if (ticks % 4 == 3)
+	  thread_calc_priority_all ();
 }
 
 /* Timer interrupt handler. */
@@ -200,6 +232,7 @@ timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
   thread_tick ();
+  if (thread_mlfqs) update();
   wakeup();
 }
 
