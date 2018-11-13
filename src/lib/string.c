@@ -243,6 +243,7 @@ strtok_r (char *s, const char *delimiters, char **save_ptr)
      If S is null, start from saved position. */
   if (s == NULL)
     s = *save_ptr;
+  if(s == NULL) return NULL;
   ASSERT (s != NULL);
 
   /* Skip any DELIMITERS at our current position. */

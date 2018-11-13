@@ -4,6 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include "threads/synch.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -25,6 +26,7 @@ typedef int tid_t;
 #define PRI_MAX 63                      /* Highest priority. */
 
 /* Floating Points. */
+/*
 #define P 17
 #define Q 14
 #define F (1<<Q)
@@ -37,7 +39,7 @@ typedef int tid_t;
 #define SUB(x, y) (x - y)
 #define MUL(x, y) ((T x) * y / F)
 #define DIV(x, y) ((T x) * F / y)
-
+*/
 
 /* A kernel thread or user process.
 
@@ -103,25 +105,39 @@ struct thread
     char name[16];                      /* Name (for debugging purposes). */
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
-    int _priority;                      // Add variable to save original priority
+    //int _priority;                      // Add variable to save original priority
     struct list_elem allelem;           /* List element for all threads list. */
-    int nice;  				// Add nice to implement advanced scheduler
-    int recent_cpu;  			// Add recent_cpu to implement advanced scheduler
+    //int nice;  				// Add nice to implement advanced scheduler
+    //int recent_cpu;  			// Add recent_cpu to implement advanced scheduler
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
-    struct lock* holding;		// Add holding to solve priority_nest, priority_chain ,,,
-    struct list locks;			// Add locks to solve priority_multiple, priority_mpltiple2 ,,,
+    //struct lock* holding;		// Add holding to solve priority_nest, priority_chain ,,,
+    //struct list locks;			// Add locks to solve priority_multiple, priority_mpltiple2 ,,,
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+   
+    int exit;
+
+    struct list_elem child_elem;
+    struct list children;
+    
+    struct semaphore sema_exec;
+    struct semaphore sema_wait;
+    struct semaphore sema_wait_2;
+    
+    bool success;
+    struct list file_descriptors;
+
+    struct file *openfile;
 #endif
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
 
-    int64_t end; // add this variable to implement end time 
+    //int64_t end; // add this variable to implement end time 
   };
 
 /* If false (default), use round-robin scheduler.
@@ -138,7 +154,7 @@ void thread_print_stats (void);
 typedef void thread_func (void *aux);
 tid_t thread_create (const char *name, int priority, thread_func *, void *);
 
-bool sort_ready_list(struct list_elem *, struct list_elem *, void *);
+//bool sort_ready_list(struct list_elem *, struct list_elem *, void *);
 
 void thread_block (void);
 void thread_unblock (struct thread *);
@@ -149,6 +165,7 @@ const char *thread_name (void);
 
 void thread_exit (void) NO_RETURN;
 void thread_yield (void);
+struct thread *thread_from_tid (tid_t tid);
 
 /* Performs some operation on thread t, given auxiliary data AUX. */
 typedef void thread_action_func (struct thread *t, void *aux);
@@ -162,10 +179,10 @@ void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
-void thread_calc_load_avg (void);
-void thread_calc_recent_cpu (struct thread *);
-void thread_calc_recent_cpu_all (void);
-void thread_calc_priority (struct thread *);
-void thread_calc_priority_all (void);
+//void thread_calc_load_avg (void);
+//void thread_calc_recent_cpu (struct thread *);
+//void thread_calc_recent_cpu_all (void);
+//void thread_calc_priority (struct thread *);
+//void thread_calc_priority_all (void);
 
 #endif /* threads/thread.h */

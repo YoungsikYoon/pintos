@@ -19,7 +19,7 @@
 
 /* Number of timer ticks since OS booted. */
 static int64_t ticks;
-struct list sleeping; // add list for implement sleep list
+//struct list sleeping; // add list for implement sleep list
 
 /* Number of loops per timer tick.
    Initialized by timer_calibrate(). */
@@ -38,7 +38,7 @@ timer_init (void)
 {
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
-  list_init (&sleeping);
+  //list_init (&sleeping);
   // add list_init() to initialize sleeping list
 }
 
@@ -88,9 +88,9 @@ timer_elapsed (int64_t then)
 }
 
 // add this function to sort sleeping list when an elem is inserted
-bool sort_sleeping(struct list_elem* a, struct list_elem* b, void* aux){
+/*bool sort_sleeping(struct list_elem* a, struct list_elem* b, void* aux){
   return list_entry(a, struct thread, elem)->end < list_entry(b, struct thread, elem)->end;
-}
+}*/
 
 /* Sleeps for approximately TICKS timer ticks.  Interrupts must
    be turned on. */
@@ -98,6 +98,11 @@ bool sort_sleeping(struct list_elem* a, struct list_elem* b, void* aux){
 void
 timer_sleep (int64_t ticks) 
 {
+  int64_t start = timer_ticks();
+  ASSERT (intr_get_level () == INTR_ON);
+  while (timer_elapsed (start) < ticks)
+	  thread_yield ();
+  /*
   enum intr_level old_level;
 
   old_level = intr_disable();
@@ -110,7 +115,7 @@ timer_sleep (int64_t ticks)
  
   thread_block();
   
-  intr_set_level (old_level);
+  intr_set_level (old_level);*/
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -185,7 +190,7 @@ timer_print_stats (void)
 
 // add this function
 // waking threads that end variable is same (have to wake) 
-void 
+/*void 
 wakeup (void)
 {
   struct thread* front;
@@ -205,11 +210,11 @@ wakeup (void)
       break;
     }
   }
-}
+}*/
 
 // add this function
 // if thread_mlfqs we update load_avg, recent_cpu, priority of threads
-void 
+/*void 
 update (void)
 {
   struct thread* cur = thread_current();
@@ -224,7 +229,7 @@ update (void)
 
   if (ticks % 4 == 3)
 	  thread_calc_priority_all ();
-}
+}*/
 
 /* Timer interrupt handler. */
 static void
@@ -232,8 +237,8 @@ timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
   thread_tick ();
-  if (thread_mlfqs) update();
-  wakeup();
+  //if (thread_mlfqs) update();
+  //wakeup();
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
