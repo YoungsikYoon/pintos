@@ -3,9 +3,14 @@
 #include <stdio.h>
 #include "userprog/gdt.h"
 #include "userprog/syscall.h"
+#include "userprog/pagedir.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "vm/page.h"
+#include "vm/frame.h"
+
+#define MAX_STACK_SIZE 0x800000
 
 /* Number of page faults processed. */
 static long long page_fault_cnt;
@@ -144,22 +149,45 @@ page_fault (struct intr_frame *f)
 
   /* Count page faults. */
   page_fault_cnt++;
-
+ 
   /* Determine cause. */
   not_present = (f->error_code & PF_P) == 0;
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
 
-  if(!user || is_kernel_vaddr(fault_addr) || not_present) exit(-1);
+  bool success = false;
+  
+  struct thread *cur = thread_current(); 
+  void* fault_page = (void*) pg_round_down(fault_addr);
 
+  if(not_present){
+    bool is_correct;
+    
+    if(user) is_correct = (fault_addr >= f->esp-32 && PHYS_BASE-MAX_STACK_SIZE <= fault_addr && fault_addr < PHYS_BASE);
+    else is_correct = (fault_addr >= cur->esp && PHYS_BASE-MAX_STACK_SIZE <= fault_addr && fault_addr < PHYS_BASE);
+    
+    if (is_correct) {
+      if (vm_find_spage(cur->spt, fault_page) == NULL)
+	vm_spage_table_install(cur->spt, ZERO, fault_page, NULL, 0, NULL, 0, 0, 0, false);	
+    }
+
+    if(vm_load_page(cur->spt, cur->pagedir, fault_page)) success = true;
+  }
+
+  if(!success){
+    if(!user){
+      exit(-1);
+      return;
+    }
   /* To implement virtual memory, delete the rest of the function
      body, and replace it with code that brings in the page to
      which fault_addr refers. */
-  printf ("Page fault at %p: %s error %s page in %s context.\n",
-          fault_addr,
-          not_present ? "not present" : "rights violation",
-          write ? "writing" : "reading",
-          user ? "user" : "kernel");
-  kill (f);
+    printf ("Page fault at %p: %s error %s page in %s context.\n",
+            fault_addr,
+            not_present ? "not present" : "rights violation",
+            write ? "writing" : "reading",
+            user ? "user" : "kernel");
+    kill (f);
+  }
 }
 

@@ -115,7 +115,6 @@ struct thread
     //struct lock* holding;		// Add holding to solve priority_nest, priority_chain ,,,
     //struct list locks;			// Add locks to solve priority_multiple, priority_mpltiple2 ,,,
 
-#ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
    
@@ -124,20 +123,21 @@ struct thread
     struct list_elem child_elem;
     struct list children;
     
-    struct semaphore sema_exec;
-    struct semaphore sema_wait;
-    struct semaphore sema_wait_2;
-    
+    struct semaphore sema_exec;  // thread.h
+    struct semaphore sema_wait;  // thread.h
+    struct semaphore sema_wait_2;  // thread.h
+
     bool success;
     struct list file_descriptors;
 
     struct file *openfile;
-#endif
+    struct spage_table *spt;
+    struct list mmap_descriptors;
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
-
-    //int64_t end; // add this variable to implement end time 
+    uint8_t* esp;
+    //int64_t end;
   };
 
 /* If false (default), use round-robin scheduler.

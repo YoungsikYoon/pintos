@@ -15,5 +15,12 @@ struct file_descriptor {
   struct file* file;
 };
 
+struct mmap_descriptor {
+  int id;
+  struct list_elem elem;
+  struct file* file;
+  void *addr;
+  size_t size;
+};
 
 #endif /* userprog/process.h */

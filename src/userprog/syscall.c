@@ -12,6 +12,7 @@
 #include "userprog/process.h"
 #include "devices/shutdown.h"
 #include "devices/input.h"
+#include "vm/page.h"
 
 static void syscall_handler (struct intr_frame *);
 
@@ -22,6 +23,10 @@ static struct file_descriptor* find_fd(int fd);
 
 void exit(int status);
 struct lock file_lock;
+
+static struct mmap_descriptor* find_md(int mid);
+int sys_mmap(int fd, void *upage);
+void sys_munmap(int mid);
 
 void
 syscall_init (void) 
@@ -37,60 +42,96 @@ syscall_handler (struct intr_frame *f)
 
   memread(f->esp, &sys_num, sizeof(sys_num)); 
 
-  if (sys_num == SYS_HALT) {
+  thread_current()->esp = f->esp;
+  
+  switch (sys_num){
+  
+  case SYS_HALT:
+  {
     shutdown_power_off();
+    
+    break;
   }
 
-  else if (sys_num == SYS_EXIT) {
+  case SYS_EXIT:
+  {  
     int status;
+    
     memread(f->esp+4,&status, sizeof(status));
     
     exit(status);
+    
+    break;
   }
-
-  else if (sys_num == SYS_EXEC) {
-    const void* cmd_line;
+  case SYS_EXEC:
+  {
+    void* cmd_line;
+    
     memread(f->esp+4, &cmd_line, sizeof(cmd_line));
-   
-    f->eax = process_execute(cmd_line);
+ 
+    if(get_user((const uint8_t*)cmd_line) == -1) exit(-1);
+    if(get_user((const uint8_t*)cmd_line + sizeof(*cmd_line)) == -1) exit(-1);
+    
+    lock_acquire(&file_lock);
+    f->eax = process_execute((const char*)cmd_line);
+    lock_release(&file_lock);
+    
+    break;
   }
-
-  else if (sys_num == SYS_WAIT) {
+  case SYS_WAIT:
+  {
     int pid;
+    
     memread(f->esp+4, &pid, sizeof(pid));
 
     f->eax = process_wait(pid);
+    
+    break;
   }
-
-  else if (sys_num == SYS_CREATE) {
+  case SYS_CREATE:
+  {
     const char* file;
     unsigned initial_size;
+
     memread(f->esp+4, &file, sizeof(file));
     memread(f->esp+8, &initial_size, sizeof(initial_size));
-    
-    if(!file) exit(-1);
- 
-    f->eax = filesys_create(file, initial_size);
-  }
 
-  else if (sys_num == SYS_REMOVE) {
-    const char* file;
-    memread(f->esp+4, &file, sizeof(file));
-    
-    f->eax = filesys_remove(file);
-  }
-
-  else if (sys_num == SYS_OPEN) {
-    const char* file;
-    memread(f->esp + 4, &file, sizeof(file));	  
-
+    if(get_user((const uint8_t*)file) == -1) exit(-1);
     if(!file) exit(-1);
 
     lock_acquire(&file_lock);
+    f->eax = filesys_create(file, initial_size);
+    lock_release(&file_lock);
     
+    break;
+  }
+  case SYS_REMOVE:
+  {
+    const char* file;
+
+    memread(f->esp+4, &file, sizeof(file));
+    
+    if(get_user((const uint8_t*)file)==-1) exit(-1);
+    
+    lock_acquire(&file_lock);
+    f->eax = filesys_remove(file);
+    lock_release(&file_lock);
+ 
+    break;
+  }
+  case SYS_OPEN:
+  {
+    const char* file;
+
+    memread(f->esp + 4, &file, sizeof(file));	  
+    
+    if(get_user((const uint8_t*)file)==-1) exit(-1);
+    if(!file) exit(-1);
+
+    lock_acquire(&file_lock);
     struct file* openfile;
     struct file_descriptor* myfd = palloc_get_page(0);
-    
+
     if(myfd){
       openfile = filesys_open(file);
       if(!openfile){
@@ -112,12 +153,16 @@ syscall_handler (struct intr_frame *f)
       f->eax = -1;
     }
     lock_release(&file_lock);
+    
+    break;
   }
-
-  else if (sys_num == SYS_FILESIZE) {
+  case SYS_FILESIZE:
+  {
     int fd;
-    memread(f->esp + 4, &fd, sizeof(fd));
 
+    memread(f->esp + 4, &fd, sizeof(fd));
+    
+    lock_acquire(&file_lock);
     struct file_descriptor* myfd = find_fd(fd);
     if(myfd && myfd->file){
       f->eax = file_length(myfd->file);
@@ -125,20 +170,23 @@ syscall_handler (struct intr_frame *f)
     else {
       f->eax = -1;
     }
+    lock_release(&file_lock);
+    break;
   }
-
-  else if (sys_num == SYS_READ) {
+  case SYS_READ:
+  {  
     int fd;
     void* buffer;
     unsigned size;
+
     memread(f->esp + 4, &fd, sizeof(fd));
     memread(f->esp + 8, &buffer, sizeof(buffer));
     memread(f->esp + 12, &size, sizeof(size));
-    	  
-    if(!is_user_vaddr((const void*)buffer) || !is_user_vaddr((const void*)(buffer + size - 1))) exit(-1);
     
-    lock_acquire(&file_lock);
+    if(get_user((const uint8_t*)buffer)==-1) exit(-1);
+    if(get_user((const uint8_t*)buffer+size-1)==-1) exit(-1);
 
+    lock_acquire(&file_lock);
     if(fd == 0){
       unsigned i;
       for(i = 0; i < size; i++){
@@ -159,16 +207,22 @@ syscall_handler (struct intr_frame *f)
       }
     }
     lock_release(&file_lock);
+    
+    break;
   }
-
-  else if (sys_num == SYS_WRITE) {
+  case SYS_WRITE:
+  {  
     int fd;
     const void* buffer;
     unsigned size;
+
     memread(f->esp + 4, &fd, sizeof(fd));
     memread(f->esp + 8, &buffer, sizeof(buffer));
     memread(f->esp + 12, &size, sizeof(size));    
     
+    if(get_user((const uint8_t*)buffer)==-1) exit(-1);
+    if(get_user((const uint8_t*)buffer+size-1)==-1) exit(-1);
+
     lock_acquire(&file_lock);
     if(fd == 1){
       putbuf(buffer, size);
@@ -184,24 +238,33 @@ syscall_handler (struct intr_frame *f)
       }
     }
     lock_release(&file_lock);
+    
+    break;
   }
-
-  else if (sys_num == SYS_SEEK) {
+  case SYS_SEEK:
+  {
     int fd;
     unsigned position;
+
     memread(f->esp+4, &fd, sizeof(fd));
     memread(f->esp+8, &position, sizeof(position));
     
+    lock_acquire(&file_lock);
     struct file_descriptor* myfd = find_fd(fd);
     if(myfd && myfd->file){
       file_seek(myfd->file, position);
     }
+    lock_release(&file_lock);
+    
+    break;
   }
-
-  else if (sys_num == SYS_TELL) {
+  case SYS_TELL:
+  {
     int fd;
+
     memread(f->esp+4, &fd, sizeof(fd));
 	   
+    lock_acquire(&file_lock);
     struct file_descriptor* myfd = find_fd(fd);
     if(myfd && myfd->file){
       f->eax = file_tell(myfd->file);
@@ -209,21 +272,53 @@ syscall_handler (struct intr_frame *f)
     else {
       f->eax = -1;
     }
+    lock_release(&file_lock);
+    
+    break;
   }
-
-  else if (sys_num == SYS_CLOSE) {
+  case SYS_CLOSE:
+  {
     int fd;
-    memread(f->esp+4, &fd, sizeof(fd));
 
+    memread(f->esp+4, &fd, sizeof(fd));
+    
+    lock_acquire(&file_lock);
     struct file_descriptor* myfd = find_fd(fd);
     if(myfd && myfd->file){
       list_remove(&(myfd->elem));
       file_close(myfd->file);
       palloc_free_page(myfd);
     }
+    lock_release(&file_lock);
+    
+    break;
   }
+  case SYS_MMAP:
+  {
+    int fd;
+    void *addr;
+    memread(f->esp + 4, &fd, sizeof(fd));
+    memread(f->esp + 8, &addr, sizeof(addr));
+    
+    f->eax = mmap(fd, addr);  
 
-  else exit(-1);
+    break;
+  }
+  case SYS_MUNMAP:
+  {
+    int mid;
+    
+    memread(f->esp + 4, &mid, sizeof(mid));
+    
+    munmap(mid);
+    
+    break;
+  }
+  default:
+    exit(-1);
+
+    break;
+  }
 }
 
 static int get_user(const uint8_t *uaddr){
@@ -274,10 +369,109 @@ struct file_descriptor* find_fd(int fd){
   return NULL;
 }
 
+static struct mmap_descriptor * find_md (int mid) {
+  struct thread *cur = thread_current();
+  struct list_elem *e;
+
+  if(list_empty(&cur->mmap_descriptors)) return NULL;
+  for( e = list_begin(&cur->mmap_descriptors); e!= list_end(&cur->mmap_descriptors); e = list_next(e)){
+    struct mmap_descriptor *temp = list_entry(e, struct mmap_descriptor, elem);
+    if(temp->id == mid) return temp;
+  }
+
+  return NULL;
+}
+
 void exit(int status){
   struct thread* cur = thread_current();
   cur->exit = status;
+  
   printf("%s: exit(%d)\n", cur->name, status);
 
   thread_exit();
+}
+
+int mmap(int fd, void *upage) {
+  if( upage == NULL || pg_ofs(upage)) return -1;
+
+  struct thread *cur = thread_current();
+
+  lock_acquire(&file_lock);
+
+  struct file *f = NULL;
+  struct file_descriptor* f_descriptor = find_fd(fd);
+  if(f_descriptor && f_descriptor->file) {
+    f = file_reopen (f_descriptor->file);
+  }
+
+  if(f==NULL)
+  {
+    lock_release(&file_lock);
+    return -1;
+  }
+  
+  size_t file_size = file_length(f);
+  if(file_size == 0)
+  {
+    lock_release(&file_lock);
+    return -1;
+  }
+  
+  if(vm_find_spage(cur->spt, upage)!=NULL || vm_find_spage(cur->spt, upage + file_size*PGSIZE)!=NULL){
+    lock_release(&file_lock);
+    return -1;
+  }
+
+  size_t i;
+  for(i = 0; i < file_size; i += PGSIZE) {
+    void *addr = upage + i;
+
+    size_t read_bytes;
+    if(i + PGSIZE < file_size)
+      read_bytes = PGSIZE;
+    else
+      read_bytes = file_size - i;
+
+    vm_spage_table_install(cur->spt, FILE_SYS, upage + i, NULL, 0, f, i, read_bytes, PGSIZE - read_bytes, true);
+  }
+
+  int mid = 1;
+  if(!list_empty(&cur->mmap_descriptors))
+    mid = list_entry(list_back(&cur->mmap_descriptors), struct mmap_descriptor, elem)->id + 1;
+
+  struct mmap_descriptor *m_descriptor = (struct mmap_desc*) malloc(sizeof (struct mmap_descriptor));
+  m_descriptor->id = mid;
+  m_descriptor->file = f;
+  m_descriptor->addr = upage;
+  m_descriptor->size = file_size;
+  list_push_back (&cur->mmap_descriptors, &m_descriptor->elem);
+
+  lock_release(&file_lock);
+  return mid;
+}
+
+void munmap(int mid)
+{
+  struct thread *cur = thread_current();
+  struct mmap_descriptor *m_descriptor = find_md(mid);
+
+  if(m_descriptor == NULL)
+    return false;
+
+  lock_acquire (&file_lock);
+  size_t file_size = m_descriptor->size;
+  void* addr = m_descriptor->addr;
+  size_t i;
+  for(i = 0; i < file_size; i += PGSIZE) {
+    size_t bytes;
+    if (i + PGSIZE < file_size) bytes = PGSIZE;
+    else bytes = file_size - i;
+
+    vm_spage_table_mm_unmap (cur->spt, cur->pagedir, addr + i, m_descriptor->file, i, bytes);
+  }
+
+  list_remove(&m_descriptor->elem);
+  file_close(m_descriptor->file);
+  free(m_descriptor);
+  lock_release(&file_lock);
 }

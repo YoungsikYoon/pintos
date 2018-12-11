@@ -3,5 +3,6 @@
 
 void syscall_init (void);
 void exit(int status);
+void munmap(int mid);
 
 #endif /* userprog/syscall.h */

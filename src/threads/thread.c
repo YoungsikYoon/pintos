@@ -102,7 +102,6 @@ thread_init (void)
   init_thread (initial_thread, "main", PRI_DEFAULT);
   initial_thread->status = THREAD_RUNNING;
   initial_thread->tid = allocate_tid ();
-  
   // Initialize this variable in thread_init()
   //load_avg = 0;
 }
@@ -356,7 +355,7 @@ thread_yield (void)
   // Remove push_back() and add list_insert_ordered() to implement sorted list
   if (cur != idle_thread) 
     list_push_back(&ready_list, &cur->elem);
-  //list_insert_ordered(&ready_list, &cur->elem, sort_ready_list, NULL);
+    //list_insert_ordered(&ready_list, &cur->elem, sort_ready_list, NULL);
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -589,6 +588,9 @@ init_thread (struct thread *t, const char *name, int priority)
 
   list_init(&t->children);
   list_init(&t->file_descriptors);
+  //#ifdef VM
+  list_init(&t->mmap_descriptors); // Add Function for project 3
+  //#endif
 
   if(t != initial_thread) list_push_back(&(thread_current()->children), &(t->child_elem));
 

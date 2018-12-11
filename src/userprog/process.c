@@ -9,6 +9,9 @@
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
 #include "userprog/syscall.h"
+#include "vm/frame.h"
+#include "vm/page.h"
+#include "vm/swap.h"
 #include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
@@ -55,7 +58,7 @@ process_execute (const char *file_name)
   if (tid == TID_ERROR) palloc_free_page (fn_copy);
   
   palloc_free_page(filename);
-  sema_down(&thread_from_tid(tid)->sema_exec);
+  sema_down(&thread_from_tid(tid)->sema_exec);  // process_execute()
   if(!thread_from_tid(tid)->success) return -1;
 
   return tid;
@@ -140,7 +143,7 @@ start_process (void *file_name_)
   /* If load failed, quit. */
   palloc_free_page (file_name);
   if (!success) thread_current()->success = false;
-  sema_up(&thread_current()->sema_exec);
+  sema_up(&thread_current()->sema_exec);  // start_process()
 
   if (!success) exit(-1);
 
@@ -184,10 +187,14 @@ process_wait (tid_t child_tid)
  
   if(child == NULL) return -1;
 
+  //printf("b1\n");
   sema_down(&(child->sema_wait));
+  //printf("b2\n");
   status = child->exit;
   list_remove(e);
   sema_up(&(child->sema_wait_2));
+  //printf("b3\n");
+
   return status;
 }
 
@@ -207,14 +214,22 @@ process_exit (void)
     file_close(temp->file);
     palloc_free_page(temp);
   }
-
+  
+  struct list *mmlist = &cur->mmap_descriptors;
+  while(!list_empty(mmlist)){
+    struct list_elem* e = list_begin(mmlist);
+    struct mmap_descriptor* desc = list_entry(e, struct mmap_descriptor, elem);
+    munmap(desc->id);
+  }
+  
   if(cur->openfile){
     file_allow_write(cur->openfile);
     file_close(cur->openfile);
   }
-
-  /* Destroy the current process's page directory and switch back
-     to the kernel-only page directory. */
+  
+  vm_spage_table_destroy(cur->spt);
+  cur->spt = NULL;
+  
   pd = cur->pagedir;
   if (pd != NULL) 
     {
@@ -229,8 +244,11 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
+  //printf("a1\n");
   sema_up(&(cur->sema_wait));
+  //printf("a2\n");
   sema_down(&(cur->sema_wait_2));
+  //printf("a3\n");
 }
 
 /* Sets up the CPU for running user code in the current
@@ -334,6 +352,8 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
   /* Allocate and activate page directory. */
   t->pagedir = pagedir_create ();
+  t->spt = vm_spage_table_create();  // Add for Project 3
+
   if (t->pagedir == NULL) 
     goto done;
   process_activate ();
@@ -506,7 +526,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
   ASSERT ((read_bytes + zero_bytes) % PGSIZE == 0);
   ASSERT (pg_ofs (upage) == 0);
   ASSERT (ofs % PGSIZE == 0);
-
+  
   file_seek (file, ofs);
   while (read_bytes > 0 || zero_bytes > 0) 
     {
@@ -516,30 +536,12 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
-      /* Get a page of memory. */
-      uint8_t *kpage = palloc_get_page (PAL_USER);
-      if (kpage == NULL)
-        return false;
-
-      /* Load this page. */
-      if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
-        {
-          palloc_free_page (kpage);
-          return false; 
-        }
-      memset (kpage + page_read_bytes, 0, page_zero_bytes);
-
-      /* Add the page to the process's address space. */
-      if (!install_page (upage, kpage, writable)) 
-        {
-          palloc_free_page (kpage);
-          return false; 
-        }
-
+      vm_spage_table_install(thread_current()->spt, FILE_SYS, upage, NULL, 0, file, ofs, page_read_bytes, page_zero_bytes, writable);
       /* Advance. */
       read_bytes -= page_read_bytes;
       zero_bytes -= page_zero_bytes;
       upage += PGSIZE;
+      ofs += PGSIZE;
     }
   return true;
 }
@@ -551,15 +553,15 @@ setup_stack (void **esp)
 {
   uint8_t *kpage;
   bool success = false;
-
-  kpage = palloc_get_page (PAL_USER | PAL_ZERO);
+ 
+  kpage = vm_frame_allocate (PHYS_BASE - PGSIZE);  // Modify for Project 3
   if (kpage != NULL) 
     {
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
       if (success)
         *esp = PHYS_BASE;
       else
-        palloc_free_page (kpage);
+        vm_frame_deallocate (kpage, true);  // Modify for Project 3
     }
   return success;
 }
@@ -580,6 +582,10 @@ install_page (void *upage, void *kpage, bool writable)
 
   /* Verify that there's not already a page at that virtual
      address, then map our page there. */
-  return (pagedir_get_page (t->pagedir, upage) == NULL
-          && pagedir_set_page (t->pagedir, upage, kpage, writable));
+  if (pagedir_get_page(t->pagedir,upage) == NULL && pagedir_set_page(t->pagedir,upage,kpage,writable)){
+    vm_spage_table_install(t->spt, FRAME, upage, kpage, 0, NULL, 0, 0, 0, false);
+    vm_frame_unpinning(kpage);
+    return true;
+  }
+  return false;
 }
